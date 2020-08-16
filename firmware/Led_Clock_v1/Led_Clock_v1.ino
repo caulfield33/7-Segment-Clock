@@ -12,6 +12,11 @@
 AsyncWebServer server(80);
 DNSServer dns;
 
+void notFound(AsyncWebServerRequest *request) {
+  Serial.println("Server not fount");
+  request->send(SPIFFS, "/index.html", String(), false, initProcessor);
+}
+
 // ==========================================================
 
 // ====================== WIFI Setup ========================
@@ -124,35 +129,34 @@ void setup() {
 
   // ==================== Web Server ==========================
 
-  //  server.on("/c", HTTP_GET, []() {
-  //    const size_t bufferSize = JSON_OBJECT_SIZE(3); // https://arduinojson.org/v5/assistant/
-  //    DynamicJsonBuffer jsonBuffer(bufferSize);
-  //
-  //    JsonObject& root = jsonBuffer.createObject();
-  //    root["h"] = 360 / 255;
-  //    root["s"] = 100 / 255;
-  //    root["v"] = 100 / 255;
-  //
-  //    String jsonString;
-  //    root.printTo(jsonString);
-  //    server.send(200, "application/json", jsonString);
-  //  });
-  //  server.serveStatic("/", SPIFFS, "/");
-  //
-  //  server.onNotFound(handleNotFound);
   server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
-    request->send(SPIFFS, "/index.html", String(), false, processor);
+    Serial.println("Server index");
+
+    request->send(SPIFFS, "/index.html", String(), false, initProcessor);
   });
+  server.onNotFound(notFound);
   server.begin();
   Serial.println("HTTP server started");
   // =================== End Web Server ========================
 
 }
 
-String processor(const String& var){
-  Serial.println(var);
+String initProcessor(const String& var) {
+  Serial.println("Processor var: " + var);
+  if (var == "DATA") {
+    String json = "{";
 
-  return "ok";
+    json += "\"state\":" + String(clock_state) + ",";
+    json += "\"timeZone\":" + String(time_zone) + ",";
+    json += "\"mode\":" + String(clock_digit_update_mode);
+
+    json += "}";
+    Serial.println("Processor data: " + json);
+
+    return json;
+  }
+
+  return "";
 };
 
 void online() {

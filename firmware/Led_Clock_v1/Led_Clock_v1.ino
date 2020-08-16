@@ -1,13 +1,22 @@
 #include <ESP8266WiFi.h>
-#include <DNSServer.h>
-#include <ESP8266WebServer.h>
-#include "WiFiManager.h"
-#include <ArduinoJson.h> 
+#include <ESPAsyncWebServer.h>
+#include <ESPAsyncWiFiManager.h>         //https://github.com/tzapu/WiFiManager
+#include <ArduinoJson.h>
 #include <FastLED.h>
+#include <FS.h>
+#include <ArduinoOTA.h>
+
+
+// ==================== Web Server ==========================
+
+AsyncWebServer server(80);
+DNSServer dns;
+
+// ==========================================================
 
 // ====================== WIFI Setup ========================
 
-void configModeCallback (WiFiManager *myWiFiManager) {
+void configModeCallback (AsyncWiFiManager *myWiFiManager) {
   Serial.println("Entered config mode");
   Serial.println(WiFi.softAPIP());
   //if you used auto generated SSID, print it
@@ -15,42 +24,57 @@ void configModeCallback (WiFiManager *myWiFiManager) {
 
 }
 
-WiFiManager wifiManager;
+AsyncWiFiManager wifiManager(&server, &dns);
 
-// ==================== End WIFI Setup ======================
+// ==========================================================
 
 // ==================== FastLED Setup =======================
 
 #define NUM_LEDS 30
 #define DATA_PIN D2
+CRGB leds[NUM_LEDS];
 
-// =================== End FastLED Setup ====================
+// ==========================================================
+
+// ========================== OTA ===========================
+
+#define SENSORNAME "7segmentClock"
+#define OTApassword "7segmentClock"
+int OTAport = 8266;
+
+// ==========================================================
 
 // ========================= Vars ===========================
 
 int clock_state = 1;
 int clock_digit_update_mode = 0;
-
-// ======================= End Vars =========================
-
-// ==================== Web Server ==========================
-
-ESP8266WebServer server(80);
-
-// =================== End Web Server ========================
+int time_zone = 1;
+// ==========================================================
 
 void setup() {
   Serial.begin(115200);
 
+  // ========================== FS ===========================
+
+  if (SPIFFS.begin()) {
+    Serial.println("mounted file system");
+  } else {
+    Serial.println("failed to mount FS");
+  }
+
+  // ======================== End FS =========================
+
+
   // ==================== FastLED Setup =======================
-  
+
   FastLED.addLeds<WS2812B, DATA_PIN>(leds, NUM_LEDS);
   fill_solid(leds, NUM_LEDS, CRGB::Black);
+  FastLED.show();
 
-// =================== End FastLED Setup ====================
+  // =================== End FastLED Setup ====================
 
   // ====================== WIFI Setup ========================
-  
+
 
   wifiManager.autoConnect("Led Clock Setup");
 
@@ -67,31 +91,90 @@ void setup() {
     delay(1000);
   }
   // ==================== End WIFI Setup ======================
-  
+
+  // ========================== OTA ===========================
+  //OTA SETUP
+  ArduinoOTA.setPort(OTAport);
+  // Hostname defaults to esp8266-[ChipID]
+  ArduinoOTA.setHostname(SENSORNAME);
+
+  // No authentication by default
+  ArduinoOTA.setPassword((const char *)OTApassword);
+
+  ArduinoOTA.onStart([]() {
+    Serial.println("Starting");
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
+  ArduinoOTA.begin();
+
+  // ========================== End OTA =======================
 
   // ==================== Web Server ==========================
-  server.serveStatic("/", SPIFFS, "/index.html")
-  
+
+  //  server.on("/c", HTTP_GET, []() {
+  //    const size_t bufferSize = JSON_OBJECT_SIZE(3); // https://arduinojson.org/v5/assistant/
+  //    DynamicJsonBuffer jsonBuffer(bufferSize);
+  //
+  //    JsonObject& root = jsonBuffer.createObject();
+  //    root["h"] = 360 / 255;
+  //    root["s"] = 100 / 255;
+  //    root["v"] = 100 / 255;
+  //
+  //    String jsonString;
+  //    root.printTo(jsonString);
+  //    server.send(200, "application/json", jsonString);
+  //  });
+  //  server.serveStatic("/", SPIFFS, "/");
+  //
+  //  server.onNotFound(handleNotFound);
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
+    request->send(SPIFFS, "/index.html", String(), false, processor);
+  });
+  server.begin();
+  Serial.println("HTTP server started");
   // =================== End Web Server ========================
 
 }
 
+String processor(const String& var){
+  Serial.println(var);
 
-void connection_check() {
-  if (!wifiManager.autoConnect()) {
-    Serial.println("failed to connect and hit timeout");
-    //reset and try again, or maybe put it to deep sleep
-    ESP.reset();
-    delay(1000);
+  return "ok";
+};
+
+void online() {
+  if (WiFi.status() != WL_CONNECTED) {
+    delay(1);
+    Serial.print("WIFI Disconnected. Attempting reconnection.");
+    if (!wifiManager.autoConnect()) {
+      Serial.println("failed to connect and hit timeout");
+      //reset and try again, or maybe put it to deep sleep
+      ESP.reset();
+      delay(1000);
+    }
   }
+  ArduinoOTA.handle();
+  //  server.handleClient();
 }
 
 void loop() {
   // ==================== Web Server ==========================
-  WiFiClient client = server.available();
-  rest.handle(client);
+
   // =================== End Web Server ========================
 
 
-  connection_check();
+  online();
 }

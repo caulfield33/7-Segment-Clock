@@ -1,11 +1,11 @@
 #include <ESP8266WiFi.h>
 #include <ESPAsyncWebServer.h>
-#include <ESPAsyncWiFiManager.h>         //https://github.com/tzapu/WiFiManager
+#include <ESPAsyncWiFiManager.h>
 #include <ArduinoJson.h>
 #include <FastLED.h>
 #include <FS.h>
 #include <ArduinoOTA.h>
-
+#include <TimeLib.h>
 
 // ==================== Web Server ==========================
 
@@ -24,9 +24,7 @@ void notFound(AsyncWebServerRequest *request) {
 void configModeCallback (AsyncWiFiManager *myWiFiManager) {
   Serial.println("Entered config mode");
   Serial.println(WiFi.softAPIP());
-  //if you used auto generated SSID, print it
   Serial.println(myWiFiManager->getConfigPortalSSID());
-
 }
 
 AsyncWiFiManager wifiManager(&server, &dns);
@@ -38,6 +36,9 @@ AsyncWiFiManager wifiManager(&server, &dns);
 #define NUM_LEDS 30
 #define DATA_PIN D2
 CRGB leds[NUM_LEDS];
+CHSV color = CHSV(0, 0, 0);
+CHSV stored_color;
+CHSV new_color = CHSV(128, 255, 128);
 
 // ==========================================================
 
@@ -54,20 +55,59 @@ int OTAport = 8266;
 int clock_state = 1;
 int clock_digit_update_mode = 0;
 int time_zone = 1;
+bool is24 = true;
+unsigned long ntp_begin;
+int digits[9][7] = {
+  {1, 1, 1, 1, 1, 1, 1},
+  {1, 1, 1, 1, 1, 1, 1},
+  {1, 1, 1, 1, 1, 1, 1},
+  {1, 1, 1, 1, 1, 1, 1},
+  {1, 1, 1, 1, 1, 1, 1},
+  {1, 1, 1, 1, 1, 1, 1},
+  {1, 1, 1, 1, 1, 1, 1},
+  {1, 1, 1, 1, 1, 1, 1},
+  {1, 1, 1, 1, 1, 1, 1}
+};
+int dots[2] = {1, 1};
+
 // ==========================================================
+
+// ========================== Time ===========================
+
+time_t getNtpTime () {
+  Serial.print("Synchronize NTP ...");
+  ntp_begin = millis();
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  while (time(nullptr) < 1500000000) {
+    delay(100);
+    Serial.print(".");
+  }
+  Serial.println(" OK");
+
+  return time(nullptr) + time_zone;
+}
 
 void setup() {
   Serial.begin(115200);
+  // ========================== Time ===========================
+
+  time_t nowUtc = getNtpTime();
+  setSyncProvider(getNtpTime);
+  setSyncInterval(3600);
+
+  // ==========================================================
 
   // ========================== FS ===========================
 
   if (SPIFFS.begin()) {
     Serial.println("mounted file system");
+
+    if (SPIFFS.exists("/config.json")) {}
   } else {
     Serial.println("failed to mount FS");
   }
 
-  // ======================== End FS =========================
+  // ==========================================================
 
 
   // ==================== FastLED Setup =======================
@@ -76,7 +116,7 @@ void setup() {
   fill_solid(leds, NUM_LEDS, CRGB::Black);
   FastLED.show();
 
-  // =================== End FastLED Setup ====================
+  // ==========================================================
 
   // ====================== WIFI Setup ========================
 
@@ -86,16 +126,14 @@ void setup() {
   //reset settings - for testing
   //wifiManager.resetSettings();
 
-  //set callback that gets called when connecting to previous WiFi fails, and enters Access Point mode
   wifiManager.setAPCallback(configModeCallback);
 
   if (!wifiManager.autoConnect()) {
     Serial.println("failed to connect and hit timeout");
-    //reset and try again, or maybe put it to deep sleep
     ESP.reset();
     delay(1000);
   }
-  // ==================== End WIFI Setup ======================
+  // ==========================================================
 
   // ========================== OTA ===========================
   //OTA SETUP
@@ -125,7 +163,7 @@ void setup() {
   });
   ArduinoOTA.begin();
 
-  // ========================== End OTA =======================
+  // ==========================================================
 
   // ==================== Web Server ==========================
 
@@ -137,7 +175,7 @@ void setup() {
   server.onNotFound(notFound);
   server.begin();
   Serial.println("HTTP server started");
-  // =================== End Web Server ========================
+  // ==========================================================
 
 }
 
@@ -165,20 +203,43 @@ void online() {
     Serial.print("WIFI Disconnected. Attempting reconnection.");
     if (!wifiManager.autoConnect()) {
       Serial.println("failed to connect and hit timeout");
-      //reset and try again, or maybe put it to deep sleep
       ESP.reset();
       delay(1000);
     }
   }
   ArduinoOTA.handle();
-  //  server.handleClient();
 }
 
 void loop() {
-  // ==================== Web Server ==========================
-
-  // =================== End Web Server ========================
-
+  displayTime();
 
   online();
+}
+
+void displayTime() {
+
+  //  fill_solid(leds, NUM_LEDS, CRGB::Black);
+
+  int display_hour = is24 ? hour() : hourFormat12();
+  int display_minute = minute();
+
+  int hour1 = display_hour / 10;
+  int hour2 = display_hour % 10;
+
+
+  int minute1 = (display_minute < 10) ? 0 : display_minute / 10;
+  int minute2 = display_minute % 10;
+
+  shopTimeOnClock(hour1, hour2, minute1, minute2);
+
+  //  FastLED.show();
+}
+
+void shopTimeOnClock(int hour1, int hour2, int minute1, int minute2) {
+  Serial.print(hour1);
+  Serial.print(hour2);
+  Serial.print(":");
+  Serial.print(minute1);
+  Serial.print(minute2);
+  Serial.println("");
 }
